@@ -2,15 +2,6 @@
 $pageTitle = 'Deck Builder';
 include __DIR__ . '/includes/head.php';
 ?>
-<section class="panel">
-    <h2>Prototype Deck Builder</h2>
-    <p>
-        This mirrors Duelingbook’s layout: filters on the left, card list in the center, and deck zones on the right.
-        Click a card to add it to the Main Deck (or use the action buttons). Deck counts update live so we can quickly
-        test legality rules before wiring into the database.
-    </p>
-</section>
-
 <section class="panel deck-builder-layout">
     <aside>
         <h3>Filters</h3>

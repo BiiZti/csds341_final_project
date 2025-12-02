@@ -38,6 +38,7 @@
         initCardDatabasePage();
         initDeckBuilderPage();
         initPublicDeckPage();
+        initMyDecksPage();
     });
 
     async function loadCards() {
@@ -507,6 +508,71 @@
             .catch(() => {
                 listEl.innerHTML = '<p>Unable to load public decks. Please try again later.</p>';
             });
+    }
+
+    function initMyDecksPage() {
+        const listEl = document.getElementById('myDeckList');
+        if (!listEl) return;
+
+        const render = () => {
+            fetch('api/decks/my.php')
+                .then(response => response.json())
+                .then(payload => {
+                    const decks = payload.data || [];
+                    if (!decks.length) {
+                        listEl.innerHTML = '<p>You have not saved any decks yet. Build one to see it here.</p>';
+                        return;
+                    }
+                    listEl.innerHTML = decks.map(deck => `
+                        <article class="deck-card">
+                            <header>
+                                <h3>${escapeHtml(deck.name)}</h3>
+                                <div>${deck.format} Format</div>
+                            </header>
+                            <p>${escapeHtml(deck.description || 'No description provided.')}</p>
+                            <ul>
+                                <li>Main: ${deck.main_count ?? 0} cards</li>
+                                <li>Side: ${deck.side_count ?? 0} cards</li>
+                            </ul>
+                            <footer>
+                                <span>Updated ${new Date(deck.updated_at).toLocaleDateString()}</span>
+                                <label>
+                                    Visibility:
+                                    <select data-deck-id="${deck.deck_id}" class="deck-visibility-select">
+                                        ${['private','unlisted','public'].map(option => `
+                                            <option value="${option}" ${deck.visibility === option ? 'selected' : ''}>${option}</option>
+                                        `).join('')}
+                                    </select>
+                                </label>
+                            </footer>
+                        </article>
+                    `).join('');
+                })
+                .catch(() => {
+                    listEl.innerHTML = '<p>Unable to load your decks. Please refresh.</p>';
+                });
+        };
+
+        render();
+
+        listEl.addEventListener('change', event => {
+            const select = event.target.closest('.deck-visibility-select');
+            if (!select) return;
+            const deckId = Number(select.dataset.deckId);
+            const visibility = select.value;
+            fetch('api/decks/visibility.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ deck_id: deckId, visibility })
+            }).then(response => {
+                if (!response.ok) {
+                    throw new Error();
+                }
+            }).catch(() => {
+                alert('Failed to update visibility. Please try again.');
+                render();
+            });
+        });
     }
 })();
 

@@ -28,6 +28,7 @@ $currentUser = $_SESSION['username'] ?? null;
             <a href="deck-builder.php">Deck Builder</a>
             <a href="public-decks.php">Public Decks</a>
             <?php if ($currentUser): ?>
+                <a href="my-decks.php">My Decks</a>
                 <span class="nav-user">Welcome, <?= htmlspecialchars($currentUser) ?></span>
                 <a href="logout.php" class="nav-auth">Log out</a>
             <?php else: ?>

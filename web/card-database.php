@@ -4,7 +4,6 @@ include __DIR__ . '/includes/head.php';
 ?>
 <section class="panel">
     <h2>Card Search</h2>
-    <p>Use the filters below to explore the sample dataset. Once hooked to MariaDB, these controls will translate directly into SQL queries (with matching relational algebra expressions for the report).</p>
     <form class="filters" id="cardFilters">
         <div>
             <label for="searchQuery">Name contains</label>
