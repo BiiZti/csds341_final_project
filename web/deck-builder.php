@@ -3,25 +3,6 @@ $pageTitle = 'Deck Builder';
 include __DIR__ . '/includes/head.php';
 ?>
 <section class="deck-builder-board">
-    <div class="builder-rail">
-        <div class="rail-stats">
-            <div class="rail-count total" id="railTotal">0</div>
-            <div class="rail-count monster" id="railMonsters">0</div>
-            <div class="rail-count spell" id="railSpells">0</div>
-            <div class="rail-count trap" id="railTraps">0</div>
-        </div>
-        <div class="rail-icons">
-            <button type="button" title="Shuffle" disabled>⟳</button>
-            <button type="button" title="Sort" disabled>A-Z</button>
-            <button type="button" title="Clear" disabled>✖</button>
-        </div>
-        <div class="rail-labels">
-            <span>DECK</span>
-            <span>SIDE</span>
-            <span>EXTRA</span>
-        </div>
-    </div>
-
     <div class="builder-preview panel">
         <div class="card-preview-panel" id="cardPreview">
             <img src="assets/images/card-placeholder.svg" alt="Card preview" id="cardPreviewImage">
@@ -73,10 +54,6 @@ include __DIR__ . '/includes/head.php';
         <div class="deck-save-status" id="deckSaveStatus"></div>
         <div class="deck-actions-row">
             <button class="btn secondary" type="button" onclick="window.location.href='my-decks.php'">My Decks</button>
-            <div class="deck-action-group">
-                <button class="btn secondary" type="button" disabled>Import</button>
-                <button class="btn secondary" type="button" disabled>Export</button>
-            </div>
             <button id="saveDeck" type="button">Save Deck</button>
         </div>
     </div>
@@ -94,7 +71,7 @@ include __DIR__ . '/includes/head.php';
     </div>
 
     <div class="builder-right panel builder-search-panel">
-        <div class="search-header">SEARCH <a href="#" style="font-size: 0.6em; float:right; text-decoration:underline;">more options</a></div>
+        <div class="search-header">SEARCH</div>
         <form class="builder-search" id="builderFilters">
             <div class="search-row">
                 <label>Name:</label>

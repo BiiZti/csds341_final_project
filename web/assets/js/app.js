@@ -89,11 +89,36 @@
     }
 
     function normalizeCards(data) {
-        return data.map(card => ({
-            ...card,
-            desc: card.description ?? card.desc ?? '',
-            image_url: card.image_path ?? card.image_url ?? null,
-        }));
+        return data.map(card => {
+            const normalizedId = Number(card.id ?? card.card_id ?? card.cardId ?? 0);
+            const rawPath = card.image_path || card.imageLocal || null;
+            const hasLocalPath = typeof rawPath === 'string' && !rawPath.startsWith('http');
+            const remoteUrl = typeof card.image_url === 'string' && card.image_url.startsWith('http')
+                ? card.image_url
+                : (typeof rawPath === 'string' && rawPath.startsWith('http') ? rawPath : null);
+
+            return {
+                ...card,
+                id: normalizedId,
+                card_id: card.card_id ?? normalizedId,
+                desc: card.card_text ?? card.description ?? card.desc ?? '',
+                local_image: hasLocalPath ? rawPath : null,
+                image_url: remoteUrl,
+            };
+        });
+
+        ['mainDeckSlots', 'extraDeckSlots', 'sideDeckSlots'].forEach(id => {
+            const container = document.getElementById(id);
+            container?.addEventListener('mouseover', event => {
+                const slot = event.target.closest('.deck-slot');
+                if (!slot || !slot.dataset.index) return;
+                let zone = 'main';
+                if (id.includes('extra')) zone = 'extra';
+                if (id.includes('side')) zone = 'side';
+                const card = state.deck[zone][Number(slot.dataset.index)];
+                if (card) setPreview(card);
+            });
+        });
     }
 
     function populateDynamicFilters() {
@@ -290,6 +315,20 @@
         document.getElementById('extraDeckSlots')?.addEventListener('click', event => handleSlotClick(event, 'extra'));
         document.getElementById('sideDeckSlots')?.addEventListener('click', event => handleSlotClick(event, 'side'));
 
+        ['mainDeckSlots', 'extraDeckSlots', 'sideDeckSlots'].forEach(id => {
+            const container = document.getElementById(id);
+            if (!container) return;
+            let zone = 'main';
+            if (id.includes('extra')) zone = 'extra';
+            if (id.includes('side')) zone = 'side';
+            container.addEventListener('mouseover', event => {
+                const slot = event.target.closest('.deck-slot');
+                if (!slot || !slot.dataset.index) return;
+                const card = state.deck[zone][Number(slot.dataset.index)];
+                if (card) setPreview(card);
+            });
+        });
+
         document.getElementById('saveDeck')?.addEventListener('click', () => {
             saveDeckToServer();
         });
@@ -440,7 +479,6 @@
         renderZone('extraDeckSlots', state.deck.extra, limits.extra, document.getElementById('extraCount'));
         renderZone('sideDeckSlots', state.deck.side, limits.side, document.getElementById('sideCount'));
         renderDeckWarnings();
-        updateRailCounts();
     }
 
     function renderZone(containerId, cards, limit, counterEl) {
@@ -449,9 +487,9 @@
         container.innerHTML = Array.from({ length: limit }, (_, index) => {
             const card = cards[index];
             if (card) {
-                const { localPath, remotePath } = getCardImageSources(card);
+                const imageUrl = getRemoteImageUrl(card);
                 return `<div class="deck-slot filled" data-index="${index}">
-                    <img src="${localPath}" onerror="this.src='${remotePath}'" alt="${escapeHtml(card.name)}">
+                    <img src="${imageUrl}" alt="${escapeHtml(card.name)}">
                 </div>`;
             }
             return `<div class="deck-slot" data-index="${index}"></div>`;
@@ -505,25 +543,22 @@
     // --- Utils ---
 
     function cardImageMarkup(card) {
-        const { localPath, remotePath } = getCardImageSources(card);
-        return `<div class="card-image"><img src="${localPath}" loading="lazy" alt="${escapeHtml(card.name)}" onerror="this.src='${remotePath}'"></div>`;
+        const remotePath = getRemoteImageUrl(card);
+        const fallback = `https://images.ygoprodeck.com/images/cards/${card.id}.jpg`;
+        return `<div class="card-image"><img src="${remotePath}" loading="lazy" alt="${escapeHtml(card.name)}" onerror="this.src='${fallback}'"></div>`;
     }
 
-    function getCardImageSources(card) {
-        const localPath = `assets/images/cards/${card.id}.jpg`;
-        const remotePath = card.image_url || card.image_url_small || 'assets/images/card-placeholder.svg';
-        return { localPath, remotePath };
-    }
-
-    function getCardImageUrl(card) {
-        return card.image_url || `assets/images/cards/${card.id}.jpg`;
+    function getRemoteImageUrl(card) {
+        return card.image_url || card.image_url_small || 'https://images.ygoprodeck.com/images/cards/' + card.id + '.jpg';
     }
 
     function setPreview(card) {
-        previewEl.name.textContent = card.name;
-        previewEl.type.textContent = [card.type, card.attribute, card.level ? `Level ${card.level}` : ''].filter(Boolean).join(' • ');
-        previewEl.desc.textContent = card.desc;
-        previewEl.image.src = getCardImageUrl(card);
+        previewEl.name.textContent = card.name || 'Unknown Card';
+        previewEl.type.textContent = [card.type, card.attribute, card.level ? `Level ${card.level}` : '']
+            .filter(Boolean)
+            .join(' • ');
+        previewEl.desc.textContent = (card.desc && card.desc.trim()) ? card.desc : 'No card text available.';
+        previewEl.image.src = getRemoteImageUrl(card);
     }
 
     function getCardById(id) { return state.cardCache.get(id); }
@@ -556,22 +591,6 @@
 
     function getTotalCopies(cardId) {
         return [...state.deck.main, ...state.deck.side, ...state.deck.extra].filter(c => c.id === cardId).length;
-    }
-
-    function updateRailCounts() {
-        const counts = { monster: 0, spell: 0, trap: 0 };
-        state.deck.main.forEach(c => {
-            if (c.type.includes('Monster')) counts.monster++;
-            else if (c.type.includes('Spell')) counts.spell++;
-            else if (c.type.includes('Trap')) counts.trap++;
-        });
-        const railTotal = document.getElementById('railTotal');
-        if (railTotal) {
-            railTotal.textContent = state.deck.main.length;
-            document.getElementById('railMonsters').textContent = counts.monster;
-            document.getElementById('railSpells').textContent = counts.spell;
-            document.getElementById('railTraps').textContent = counts.trap;
-        }
     }
 
     function renderDeckWarnings() {

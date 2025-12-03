@@ -500,7 +500,7 @@ button:hover,
 
 .deck-builder-board {
     display: grid;
-    grid-template-columns: 80px 260px minmax(520px, 1fr) 300px;
+    grid-template-columns: 260px minmax(520px, 1fr) 300px;
     gap: 1.5rem;
     padding: 2rem 0;
     max-width: 1400px;
@@ -748,74 +748,6 @@ button:hover,
     min-height: 180px;
 }
 
-.builder-rail {
-    background: linear-gradient(180deg, rgba(122, 0, 122, 0.65), rgba(69, 0, 97, 0.8));
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 18px;
-    padding: 1rem 0.5rem;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 1rem;
-}
-
-.rail-stats {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    width: 100%;
-    align-items: center;
-}
-
-.rail-count {
-    width: 56px;
-    height: 56px;
-    border-radius: 12px;
-    font-size: 1.4rem;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #fff;
-    background: rgba(0, 0, 0, 0.25);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-}
-
-.rail-count.total { background: rgba(103, 58, 183, 0.9); }
-.rail-count.monster { background: rgba(249, 115, 22, 0.9); }
-.rail-count.spell { background: rgba(14, 165, 233, 0.9); }
-.rail-count.trap { background: rgba(244, 114, 182, 0.9); }
-
-.rail-icons {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-}
-
-.rail-icons button {
-    background: rgba(0, 0, 0, 0.25);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    color: #fff;
-    border-radius: 50%;
-    width: 40px;
-    height: 40px;
-}
-
-.rail-labels {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-    margin-top: auto;
-    align-items: center;
-    color: rgba(255, 255, 255, 0.8);
-    font-weight: 700;
-}
-
-.rail-labels span {
-    writing-mode: vertical-rl;
-    transform: rotate(180deg);
-    letter-spacing: 0.4em;
-}
 
 .deck-actions-row {
     display: flex;
@@ -823,11 +755,6 @@ button:hover,
     align-items: center;
     margin-bottom: 1rem;
     flex-wrap: wrap;
-}
-
-.deck-action-group {
-    display: flex;
-    gap: 0.35rem;
 }
 
 .master-grid {
@@ -1026,12 +953,6 @@ button:hover,
     }
 
     .builder-preview {
-        order: -2;
-    }
-
-    .builder-rail {
-        flex-direction: row;
-        justify-content: center;
         order: -1;
     }
 

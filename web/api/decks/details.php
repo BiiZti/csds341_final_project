@@ -32,7 +32,28 @@ if (!$deck) {
     exit;
 }
 
-$cardsStmt = $pdo->prepare('SELECT card_id, slot, copies FROM deck_cards WHERE deck_id = :deck_id');
+$cardsStmt = $pdo->prepare('
+    SELECT 
+        dc.card_id,
+        dc.slot,
+        dc.copies,
+        c.name,
+        c.type,
+        c.race,
+        c.attribute,
+        c.level,
+        c.atk,
+        c.def,
+        c.card_text AS description,
+        c.archetype,
+        c.limit_tcg,
+        c.limit_ocg,
+        c.limit_goat,
+        c.image_path AS image_url
+    FROM deck_cards dc
+    JOIN cards c ON c.card_id = dc.card_id
+    WHERE dc.deck_id = :deck_id
+');
 $cardsStmt->execute([':deck_id' => $deckId]);
 $cards = $cardsStmt->fetchAll();
 
