@@ -1,8 +1,7 @@
 (() => {
     const cardsEndpoint = 'api/cards.php';
-    const cardsFallbackEndpoint = 'assets/data/cards.json';
-    const CARD_DB_CHUNK = 84;
-    const BUILDER_CHUNK = 120;
+    const BUILDER_CHUNK = 20;
+    const DATABASE_CHUNK = 50;
     const DEFAULT_BANLIST = 'ban_tcg';
     const BANLIST_LABELS = {
         ban_tcg: 'Advanced (TCG)',
@@ -11,8 +10,8 @@
     };
 
     const state = {
-        cards: [],
-        cardIndex: new Map(),
+        cards: [], // Current search results (view)
+        cardCache: new Map(), // All loaded cards (id -> card) for quick lookup
         deck: {
             main: [],
             side: [],
@@ -24,8 +23,10 @@
         },
         currentDeckId: null,
         pagination: {
-            cardDb: CARD_DB_CHUNK,
-            builder: BUILDER_CHUNK
+            builderPage: 1,
+            databasePage: 1,
+            totalPages: 1,
+            totalCount: 0
         }
     };
     const previewEl = {
@@ -42,7 +43,6 @@
     };
 
     document.addEventListener('DOMContentLoaded', async () => {
-        await loadCards();
         populateDynamicFilters();
         initCardDatabasePage();
         initDeckBuilderPage();
@@ -50,57 +50,70 @@
         initMyDecksPage();
     });
 
-    async function loadCards() {
+    // --- API Interaction ---
+
+    async function fetchCards(filters = {}, context = 'builder') {
+        const params = new URLSearchParams();
+        Object.entries(filters).forEach(([key, value]) => {
+            if (value !== '' && value !== undefined && value !== null) {
+                params.append(key, value);
+            }
+        });
+        
+        const limit = context === 'database' ? DATABASE_CHUNK : BUILDER_CHUNK;
+        params.set('limit', limit);
+        
+        // Handle pagination
+        const page = filters.page || 1;
+        params.set('page', page);
+
         try {
-            const response = await fetch(cardsEndpoint);
+            const response = await fetch(`${cardsEndpoint}?${params.toString()}`);
+            if (!response.ok) throw new Error('Network response was not ok');
             const payload = await response.json();
-            const data = payload.data ?? payload;
-            state.cards = normalizeCards(data);
+            const data = payload.data || [];
+            
+            // Normalize and cache
+            const normalized = normalizeCards(data);
+            normalized.forEach(card => state.cardCache.set(card.id, card));
+            
+            // Update pagination state
+            state.pagination.totalPages = payload.meta.pages;
+            state.pagination.totalCount = payload.meta.total;
+            
+            return normalized;
         } catch (error) {
-            console.warn('API unavailable, falling back to local JSON.', error);
-            const response = await fetch(cardsFallbackEndpoint);
-            const data = await response.json();
-            state.cards = normalizeCards(data);
-        }
-        state.cardIndex = new Map(state.cards.map(card => [card.id, card]));
-        if (state.cards.length) {
-            setPreview(state.cards[0]);
+            console.error('Fetch cards failed:', error);
+            return [];
         }
     }
 
     function normalizeCards(data) {
-        return data
-            .map(card => ({
-                ...card,
-                desc: card.description ?? card.desc ?? '',
-                image_url: card.image_path ?? card.image_url ?? null,
-            }))
-            .sort((a, b) => a.name.localeCompare(b.name));
+        return data.map(card => ({
+            ...card,
+            desc: card.description ?? card.desc ?? '',
+            image_url: card.image_path ?? card.image_url ?? null,
+        }));
     }
 
     function populateDynamicFilters() {
-        fillSelect('attributeFilter', uniqueValues('attribute'));
-        fillSelect('builderAttribute', uniqueValues('attribute'));
-        fillSelect('typeFilter', uniqueValues('type'));
-        fillSelect('builderType', uniqueValues('race'));
-        fillSelect('raceFilter', uniqueValues('race'));
-    }
-
-    function uniqueValues(key) {
-        const set = new Set();
-        state.cards.forEach(card => {
-            const value = card[key];
-            if (value) set.add(value);
-        });
-        return Array.from(set).sort((a, b) => a.localeCompare(b));
+        const races = ['Aqua','Beast','Beast-Warrior','Cyberse','Dinosaur','Divine-Beast','Dragon','Fairy','Fiend','Fish','Insect','Machine','Plant','Psychic','Pyro','Reptile','Rock','Sea Serpent','Spellcaster','Thunder','Warrior','Winged Beast','Wyrm','Zombie'];
+        fillSelect('builderType', races);
+        fillSelect('typeFilter', ['Normal Monster', 'Effect Monster', 'Spell Card', 'Trap Card', 'Fusion Monster', 'Ritual Monster', 'Synchro Monster', 'XYZ Monster', 'Link Monster']);
+        fillSelect('raceFilter', races);
+        
+        const attributes = ['DARK','DIVINE','EARTH','FIRE','LIGHT','WATER','WIND'];
+        fillSelect('builderAttribute', attributes);
+        fillSelect('attributeFilter', attributes);
     }
 
     function fillSelect(id, values) {
         const select = document.getElementById(id);
         if (!select) return;
+        const existing = select.value;
         select.innerHTML = '';
         const defaultOption = document.createElement('option');
-        defaultOption.value = '';
+        defaultOption.value = 'Any';
         defaultOption.textContent = 'Any';
         select.appendChild(defaultOption);
         values.forEach(value => {
@@ -109,7 +122,10 @@
             option.textContent = value;
             select.appendChild(option);
         });
+        if (existing) select.value = existing;
     }
+
+    // --- Card Database Page ---
 
     function initCardDatabasePage() {
         const resultsEl = document.getElementById('cardResults');
@@ -117,38 +133,87 @@
 
         const metaEl = document.getElementById('cardResultsMeta');
         const moreBtn = document.getElementById('cardResultsMore');
+        let currentResults = [];
 
-        const render = (reset = false) => {
-            if (reset) state.pagination.cardDb = CARD_DB_CHUNK;
-            const filters = collectFilters({
+        const loadResults = async (append = false) => {
+            if (!append) {
+                state.pagination.databasePage = 1;
+                currentResults = [];
+                resultsEl.innerHTML = '<p>Loading cards...</p>';
+            } else {
+                state.pagination.databasePage++;
+            }
+
+            const filters = {
                 search: document.getElementById('searchQuery')?.value,
                 attribute: document.getElementById('attributeFilter')?.value,
-                cardType: document.getElementById('typeFilter')?.value,
+                type: document.getElementById('typeFilter')?.value, // mapped to 'type' column
                 race: document.getElementById('raceFilter')?.value,
-                level: document.getElementById('levelFilter')?.value
-            });
-            const filtered = filterCards(filters);
-            const visible = filtered.slice(0, state.pagination.cardDb);
-            renderCardGrid(resultsEl, visible, { mode: 'database' });
-            updateResultsMeta(metaEl, visible.length, filtered.length);
-            toggleMoreButton(moreBtn, visible.length, filtered.length, () => {
-                state.pagination.cardDb += CARD_DB_CHUNK;
-                render();
-            });
+                level_min: document.getElementById('levelFilter')?.value,
+                page: state.pagination.databasePage
+            };
+
+            // Cleanup "Any" values
+            if (filters.attribute === 'Any') delete filters.attribute;
+            if (filters.type === 'Any') delete filters.type;
+            if (filters.race === 'Any') delete filters.race;
+            if (filters.level_min === 'Any') delete filters.level_min;
+
+            const newCards = await fetchCards(filters, 'database');
+            
+            if (append) {
+                currentResults = [...currentResults, ...newCards];
+            } else {
+                currentResults = newCards;
+            }
+
+            renderDatabaseGrid(resultsEl, currentResults);
+            updateDatabaseMeta(metaEl, currentResults.length, state.pagination.totalCount);
+            
+            if (moreBtn) {
+                moreBtn.hidden = state.pagination.databasePage >= state.pagination.totalPages;
+                moreBtn.onclick = () => loadResults(true);
+            }
         };
 
-        document.getElementById('applyCardFilters')?.addEventListener('click', () => render(true));
-        render(true);
+        document.getElementById('applyCardFilters')?.addEventListener('click', () => loadResults(false));
+        document.getElementById('cardFilters')?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            loadResults(false);
+        });
+
+        // Initial load
+        loadResults(false);
     }
+
+    function renderDatabaseGrid(container, cards) {
+        if (!cards.length) {
+            container.innerHTML = '<p>No cards match the filters.</p>';
+            return;
+        }
+        container.innerHTML = cards.map(card => `
+            <article class="card-tile" data-card-id="${card.id}">
+                ${cardImageMarkup(card)}
+                <header>${escapeHtml(card.name)}</header>
+                <div class="card-stats">
+                    ${[card.attribute, card.type, card.level ? `Lv${card.level}` : ''].filter(Boolean).join(' / ')}
+                </div>
+                <p>${truncate(card.desc, 100)}</p>
+            </article>
+        `).join('');
+    }
+
+    function updateDatabaseMeta(el, shown, total) {
+        if(el) el.textContent = `Showing ${shown} of ${total} cards`;
+    }
+
+    // --- Deck Builder Page ---
 
     function initDeckBuilderPage() {
         const builderGrid = document.getElementById('builderCardGrid');
         if (!builderGrid) return;
 
-        const metaEl = document.getElementById('builderCardMeta');
-        const moreBtn = document.getElementById('builderMoreBtn');
         const banlistSelect = document.getElementById('banlistFormat');
-
         if (banlistSelect) {
             if (!banlistSelect.value) {
                 banlistSelect.value = state.deckSettings.banlist;
@@ -158,61 +223,68 @@
             banlistSelect.addEventListener('change', () => {
                 state.deckSettings.banlist = banlistSelect.value;
                 renderDeckWarnings();
-                renderDeckGrid(true);
             });
         }
 
-        const renderDeckGrid = (reset = false) => {
-            if (reset) state.pagination.builder = BUILDER_CHUNK;
-            const filters = collectFilters({
+        const triggerSearch = async (resetPage = false) => {
+            if (resetPage) state.pagination.builderPage = 1;
+            
+            const filters = {
                 search: document.getElementById('builderSearch')?.value,
+                description: document.getElementById('builderDesc')?.value,
+                category: document.getElementById('builderCardCategory')?.value,
                 attribute: document.getElementById('builderAttribute')?.value,
                 race: document.getElementById('builderType')?.value,
-                level: document.getElementById('builderLevel')?.value,
-                compare: 'lte'
-            });
-            const filtered = filterCards(filters);
-            const visible = filtered.slice(0, state.pagination.builder);
-            renderCardGrid(builderGrid, visible, { mode: 'builder' });
-            updateResultsMeta(metaEl, visible.length, filtered.length);
-            toggleMoreButton(moreBtn, visible.length, filtered.length, () => {
-                state.pagination.builder += BUILDER_CHUNK;
-                renderDeckGrid();
-            });
+                level_min: document.getElementById('builderLevelMin')?.value,
+                level_max: document.getElementById('builderLevelMax')?.value,
+                atk_min: document.getElementById('builderAtkMin')?.value,
+                atk_max: document.getElementById('builderAtkMax')?.value,
+                def_min: document.getElementById('builderDefMin')?.value,
+                def_max: document.getElementById('builderDefMax')?.value,
+                limit_status: document.getElementById('builderLimit')?.value,
+                sort: document.getElementById('builderOrder')?.value,
+                page: state.pagination.builderPage
+            };
+            
+            // Clean up filters
+            if (filters.category === '') delete filters.category; 
+            if (filters.attribute === 'Any') delete filters.attribute;
+            if (filters.race === 'Any') delete filters.race;
+            if (filters.limit_status === 'Any') delete filters.limit_status;
+
+            builderGrid.innerHTML = '<p>Loading...</p>';
+            state.cards = await fetchCards(filters, 'builder');
+            renderBuilderGrid(builderGrid, state.cards);
+            updateBuilderPaginationUI();
         };
 
-        document.querySelectorAll('#builderFilters input, #builderFilters select')
-            .forEach(el => el.addEventListener('input', () => renderDeckGrid(true)));
+        document.getElementById('builderFilters')?.addEventListener('submit', event => {
+            event.preventDefault();
+            triggerSearch(true);
+        });
+        document.getElementById('builderSearchButton')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            triggerSearch(true);
+        });
 
-        builderGrid.addEventListener('click', event => {
-            const button = event.target.closest('button[data-action]');
-            if (!button) return;
-            const cardId = Number(button.dataset.cardId);
-            let zone = 'main';
-            if (button.dataset.action === 'add-side') zone = 'side';
-            if (button.dataset.action === 'add-extra') zone = 'extra';
-            const card = state.cards.find(c => c.id === cardId);
-            let targetZone = zone;
-            const isExtraType = card && (card.type?.includes('Fusion') || card.type?.includes('Synchro') || card.type?.includes('XYZ') || card.type?.includes('Link'));
-            if (isExtraType && button.dataset.action === 'add-main') {
-                targetZone = 'extra';
+        document.getElementById('builderPrev')?.addEventListener('click', () => {
+            if (state.pagination.builderPage > 1) {
+                state.pagination.builderPage--;
+                triggerSearch();
             }
-            addCardToDeck(targetZone, card);
         });
-        builderGrid.addEventListener('mouseover', event => {
-            const tile = event.target.closest('.card-tile');
-            if (!tile) return;
-            const cardId = Number(tile.dataset.cardId);
-            const card = state.cards.find(c => c.id === cardId);
-            if (card) setPreview(card);
+        document.getElementById('builderNext')?.addEventListener('click', () => {
+            if (state.pagination.builderPage < state.pagination.totalPages) {
+                state.pagination.builderPage++;
+                triggerSearch();
+            }
         });
-        builderGrid.addEventListener('focusin', event => {
-            const tile = event.target.closest('.card-tile');
-            if (!tile) return;
-            const cardId = Number(tile.dataset.cardId);
-            const card = state.cards.find(c => c.id === cardId);
-            if (card) setPreview(card);
-        });
+
+        // Initial Load
+        triggerSearch(true);
+
+        // Events (Drag, DblClick)
+        setupBuilderInteractions(builderGrid);
 
         document.getElementById('mainDeckSlots')?.addEventListener('click', event => handleSlotClick(event, 'main'));
         document.getElementById('extraDeckSlots')?.addEventListener('click', event => handleSlotClick(event, 'extra'));
@@ -223,11 +295,168 @@
         });
 
         renderDeckSlots();
-        renderDeckGrid(true);
         const deckIdParam = getQueryParam('deck_id');
         if (deckIdParam) {
             loadDeckForEditing(Number(deckIdParam));
         }
+    }
+
+    function updateBuilderPaginationUI() {
+        const countEl = document.getElementById('builderResultCount');
+        const prevBtn = document.getElementById('builderPrev');
+        const nextBtn = document.getElementById('builderNext');
+        
+        if (countEl) {
+            const start = (state.pagination.builderPage - 1) * BUILDER_CHUNK + 1;
+            const end = Math.min(state.pagination.builderPage * BUILDER_CHUNK, state.pagination.totalCount);
+            countEl.textContent = state.pagination.totalCount > 0 
+                ? `${start}-${end} / ${state.pagination.totalCount}`
+                : '0 / 0';
+        }
+        if (prevBtn) prevBtn.disabled = state.pagination.builderPage <= 1;
+        if (nextBtn) nextBtn.disabled = state.pagination.builderPage >= state.pagination.totalPages;
+    }
+
+    function renderBuilderGrid(container, cards) {
+        if (!cards.length) {
+            container.innerHTML = '<p>No results.</p>';
+            return;
+        }
+        container.innerHTML = cards.map(card => `
+            <div class="card-tile" data-card-id="${card.id}" draggable="true">
+                ${cardImageMarkup(card)}
+            </div>
+        `).join('');
+    }
+
+    function setupBuilderInteractions(grid) {
+        grid.addEventListener('dragstart', event => {
+            const cardEl = event.target.closest('.card-tile');
+            if (!cardEl) return;
+            const cardId = Number(cardEl.dataset.cardId);
+            const card = state.cardCache.get(cardId);
+            if (card) {
+                event.dataTransfer.setData('text/plain', JSON.stringify(card));
+                event.dataTransfer.effectAllowed = 'copy';
+            }
+        });
+
+        grid.addEventListener('dblclick', event => {
+            const tile = event.target.closest('.card-tile');
+            if (!tile) return;
+            const cardId = Number(tile.dataset.cardId);
+            const card = state.cardCache.get(cardId);
+            if (!card) return;
+
+            let targetZone = 'main';
+            if (isExtraDeckCard(card)) targetZone = 'extra';
+            addCardToDeck(targetZone, card);
+        });
+
+        grid.addEventListener('mouseover', event => {
+            const tile = event.target.closest('.card-tile');
+            if (!tile) return;
+            const cardId = Number(tile.dataset.cardId);
+            const card = state.cardCache.get(cardId);
+            if (card) setPreview(card);
+        });
+        
+        grid.addEventListener('click', event => {
+            const tile = event.target.closest('.card-tile');
+            if (!tile) return;
+            const cardId = Number(tile.dataset.cardId);
+            const card = state.cardCache.get(cardId);
+            if (card) setPreview(card);
+        });
+
+        // Drop targets
+        ['mainDeckSlots', 'extraDeckSlots', 'sideDeckSlots'].forEach(id => {
+            const container = document.getElementById(id);
+            const parent = container?.parentElement; 
+            if (!parent) return;
+
+            let zone = 'main';
+            if (id.includes('extra')) zone = 'extra';
+            if (id.includes('side')) zone = 'side';
+
+            parent.addEventListener('dragover', event => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'copy';
+                parent.classList.add('drag-over');
+            });
+
+            parent.addEventListener('dragleave', () => {
+                parent.classList.remove('drag-over');
+            });
+
+            parent.addEventListener('drop', event => {
+                event.preventDefault();
+                parent.classList.remove('drag-over');
+                try {
+                    const data = event.dataTransfer.getData('text/plain');
+                    const card = JSON.parse(data);
+                    if (card && card.id) {
+                        let targetZone = zone;
+                        if (isExtraDeckCard(card) && zone === 'main') targetZone = 'extra';
+                        else if (!isExtraDeckCard(card) && zone === 'extra') targetZone = 'main';
+                        addCardToDeck(targetZone, card);
+                    }
+                } catch (e) {
+                    console.error('Drop error', e);
+                }
+            });
+        });
+    }
+
+    // --- Deck Management ---
+
+    function addCardToDeck(zone, card) {
+        if (!card) return;
+        if (!state.deck[zone]) state.deck[zone] = [];
+        if (zone === 'main' && state.deck.main.length >= limits.main) return alert('Main deck max 60.');
+        if (zone === 'extra' && state.deck.extra.length >= limits.extra) return alert('Extra deck max 15.');
+        if (zone === 'side' && state.deck.side.length >= limits.side) return alert('Side deck max 15.');
+
+        const limit = allowedCopies(card);
+        if (limit === 0) return alert(`${card.name} is Forbidden.`);
+        if (getTotalCopies(card.id) >= limit) return alert(`Max ${limit} copies allowed.`);
+
+        state.deck[zone].push(card);
+        renderDeckSlots();
+    }
+
+    function handleSlotClick(event, zone) {
+        const slot = event.target.closest('.deck-slot');
+        if (!slot || !slot.dataset.index) return;
+        const index = Number(slot.dataset.index);
+        if (state.deck[zone][index]) {
+            state.deck[zone].splice(index, 1);
+            renderDeckSlots();
+        }
+    }
+
+    function renderDeckSlots() {
+        renderZone('mainDeckSlots', state.deck.main, limits.main, document.getElementById('mainCount'));
+        renderZone('extraDeckSlots', state.deck.extra, limits.extra, document.getElementById('extraCount'));
+        renderZone('sideDeckSlots', state.deck.side, limits.side, document.getElementById('sideCount'));
+        renderDeckWarnings();
+        updateRailCounts();
+    }
+
+    function renderZone(containerId, cards, limit, counterEl) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        container.innerHTML = Array.from({ length: limit }, (_, index) => {
+            const card = cards[index];
+            if (card) {
+                const { localPath, remotePath } = getCardImageSources(card);
+                return `<div class="deck-slot filled" data-index="${index}">
+                    <img src="${localPath}" onerror="this.src='${remotePath}'" alt="${escapeHtml(card.name)}">
+                </div>`;
+            }
+            return `<div class="deck-slot" data-index="${index}"></div>`;
+        }).join('');
+        if (counterEl) counterEl.textContent = cards.length;
     }
 
     async function loadDeckForEditing(deckId) {
@@ -237,7 +466,7 @@
             if (!response.ok) throw new Error();
             const data = await response.json();
             const deck = data.deck;
-            const cards = data.cards || [];
+            const cards = data.cards || []; 
 
             state.currentDeckId = deckId;
             document.getElementById('deckName').value = deck.name;
@@ -246,9 +475,17 @@
             document.getElementById('deckDescription').value = deck.description || '';
 
             state.deck = { main: [], side: [], extra: [] };
-            cards.forEach(entry => {
-                const card = state.cardIndex.get(Number(entry.card_id));
+            
+            const normalizedCards = normalizeCards(cards);
+            normalizedCards.forEach(card => {
+                state.cardCache.set(Number(card.card_id || card.id), card);
+            });
+
+            normalizedCards.forEach(entry => {
+                const cardId = Number(entry.card_id || entry.id);
+                const card = state.cardCache.get(cardId);
                 if (!card) return;
+                
                 const slot = entry.slot || 'main';
                 const copies = Number(entry.copies) || 1;
                 if (!state.deck[slot]) state.deck[slot] = [];
@@ -258,277 +495,48 @@
             });
 
             renderDeckSlots();
-            renderDeckGrid(true);
-            if (statusEl) {
-                statusEl.textContent = 'Editing saved deck. Changes will update this entry.';
-            }
+            if (statusEl) statusEl.textContent = 'Editing saved deck.';
         } catch (error) {
-            if (statusEl) statusEl.textContent = 'Unable to load deck for editing.';
+            console.error(error);
+            if (statusEl) statusEl.textContent = 'Unable to load deck.';
         }
     }
 
-    async function saveDeckToServer() {
-        const statusEl = document.getElementById('deckSaveStatus');
-        if (!statusEl) return;
+    // --- Utils ---
 
-        const name = document.getElementById('deckName')?.value.trim() || '';
-        const format = document.getElementById('deckFormat')?.value || 'Advanced';
-        const visibility = document.getElementById('deckVisibility')?.value || 'private';
-        const description = document.getElementById('deckDescription')?.value || '';
-
-        if (!name) {
-            statusEl.textContent = 'Deck name is required.';
-            statusEl.className = 'deck-save-status error';
-            return;
-        }
-
-        if (state.deck.main.length < 40 || state.deck.main.length > 60) {
-            statusEl.textContent = 'Main deck must contain 40-60 cards.';
-            statusEl.className = 'deck-save-status error';
-            return;
-        }
-        if ((state.deck.side.length > 15) || ((state.deck.extra || []).length > 15)) {
-            statusEl.textContent = 'Extra and Side decks must have 0-15 cards.';
-            statusEl.className = 'deck-save-status error';
-            return;
-        }
-
-        statusEl.textContent = 'Saving deck...';
-        statusEl.className = 'deck-save-status';
-
-        const payload = {
-            name,
-            format,
-            visibility,
-            description,
-            deck_id: state.currentDeckId,
-            main: state.deck.main.map(card => card?.id).filter(Boolean),
-            side: state.deck.side.map(card => card?.id).filter(Boolean),
-            extra: (state.deck.extra || []).map(card => card?.id).filter(Boolean)
-        };
-
-        try {
-            const response = await fetch('api/decks/save.php', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            const data = await response.json();
-            if (response.ok && data.success) {
-                state.currentDeckId = data.deck_id ?? state.currentDeckId;
-                statusEl.textContent = 'Deck saved successfully!';
-                statusEl.className = 'deck-save-status success';
-            } else {
-                statusEl.textContent = data.error || 'Unable to save deck.';
-                statusEl.className = 'deck-save-status error';
-            }
-        } catch (error) {
-            statusEl.textContent = 'Network error while saving deck.';
-            statusEl.className = 'deck-save-status error';
-        }
+    function cardImageMarkup(card) {
+        const { localPath, remotePath } = getCardImageSources(card);
+        return `<div class="card-image"><img src="${localPath}" loading="lazy" alt="${escapeHtml(card.name)}" onerror="this.src='${remotePath}'"></div>`;
     }
 
-    function collectFilters(input) {
-        const filters = { ...input };
-        if (filters.search) filters.search = filters.search.trim().toLowerCase();
-        ['attribute', 'cardType', 'race', 'archetype'].forEach(key => {
-            if (filters[key]) filters[key] = filters[key].toLowerCase();
-        });
-        filters.level = filters.level ? Number(filters.level) : '';
-        return filters;
+    function getCardImageSources(card) {
+        const localPath = `assets/images/cards/${card.id}.jpg`;
+        const remotePath = card.image_url || card.image_url_small || 'assets/images/card-placeholder.svg';
+        return { localPath, remotePath };
     }
 
-    function filterCards(filters) {
-        return state.cards.filter(card => {
-            const name = card.name?.toLowerCase() || '';
-            const attribute = (card.attribute ?? '').toLowerCase();
-            const type = (card.type ?? '').toLowerCase();
-            const race = (card.race ?? '').toLowerCase();
-            const archetype = (card.archetype ?? '').toLowerCase();
-            const cardLevel = card.level ?? card.link ?? null;
-
-            if (filters.search && !name.includes(filters.search)) return false;
-            if (filters.attribute && attribute !== filters.attribute) return false;
-            if (filters.cardType && type !== filters.cardType) return false;
-            if (filters.race && race !== filters.race) return false;
-            if (filters.archetype && archetype !== filters.archetype) return false;
-            if (filters.level) {
-                if (cardLevel === null) return false;
-                const compare = filters.compare === 'lte'
-                    ? cardLevel <= filters.level
-                    : cardLevel >= filters.level;
-                if (!compare) return false;
-            }
-            return true;
-        });
+    function getCardImageUrl(card) {
+        return card.image_url || `assets/images/cards/${card.id}.jpg`;
     }
 
-    function renderCardGrid(container, cards, { mode }) {
-        if (!cards.length) {
-            container.innerHTML = '<p>No cards match the filters.</p>';
-            return;
-        }
-
-        container.innerHTML = cards.map(card => {
-            const stats = [
-                card.attribute,
-                card.type,
-                card.race && card.type?.includes('Monster') ? card.race : '',
-                card.level ? `Level ${card.level}` : card.link ? `Link ${card.link}` : ''
-            ].filter(Boolean).join(' • ');
-            const banStatus = getBanStatus(card);
-            const badge = mode === 'builder' && banStatus
-                ? `<span class="card-badge ${banStatus.toLowerCase().replace(/\s+/g, '-')}" title="${currentBanlistLabel()} banlist">${banStatus}</span>`
-                : '';
-
-            return `
-                <article class="card-tile" data-card-id="${card.id}">
-                    ${cardImageMarkup(card)}
-                    <header>${escapeHtml(card.name)}${badge}</header>
-                    <div class="card-stats">${stats}</div>
-                    <p>${truncate(card.desc || 'No description available.')}
-                        ${card.archetype ? `<br><small>Archetype: ${escapeHtml(card.archetype)}</small>` : ''}
-                    </p>
-                    ${mode === 'builder' ? `
-                        <div class="card-actions">
-                            <button data-card-id="${card.id}" data-action="add-main">Add Main</button>
-                            <button data-card-id="${card.id}" data-action="add-side">Add Side</button>
-                            <button data-card-id="${card.id}" data-action="add-extra">Add Extra</button>
-                        </div>
-                    ` : ''}
-                </article>
-            `;
-        }).join('');
+    function setPreview(card) {
+        previewEl.name.textContent = card.name;
+        previewEl.type.textContent = [card.type, card.attribute, card.level ? `Level ${card.level}` : ''].filter(Boolean).join(' • ');
+        previewEl.desc.textContent = card.desc;
+        previewEl.image.src = getCardImageUrl(card);
     }
 
-    function updateResultsMeta(element, showing, total) {
-        if (!element) return;
-        element.textContent = total
-            ? `Showing ${showing} of ${total} cards`
-            : 'No cards match the filters.';
-    }
-
-    function toggleMoreButton(button, showing, total, handler) {
-        if (!button) return;
-        const shouldShow = total > showing;
-        button.hidden = !shouldShow;
-        button.onclick = shouldShow ? handler : null;
-    }
-
-    function truncate(text, length = 160) {
-        if (!text) return '';
-        return text.length > length ? `${text.slice(0, length)}…` : text;
-    }
-
-    function addCardToDeck(zone, card) {
-        if (!card) return;
-        if (!state.deck[zone]) state.deck[zone] = [];
-        if (zone === 'main') {
-            if (state.deck.main.length >= limits.main) {
-                alert('Main deck cannot exceed 60 cards.');
-                return;
-            }
-        } else if (zone === 'extra') {
-            if (state.deck.extra.length >= limits.extra) {
-                alert('Extra deck cannot exceed 15 cards.');
-                return;
-            }
-        } else if (zone === 'side') {
-            if (state.deck.side.length >= limits.side) {
-                alert('Side deck cannot exceed 15 cards.');
-                return;
-            }
-        }
-        const limit = allowedCopies(card);
-        if (limit === 0) {
-            alert(`${card.name} is Forbidden on the ${currentBanlistLabel()} banlist.`);
-            return;
-        }
-        const totalCopies = getTotalCopies(card.id);
-        if (totalCopies >= limit) {
-            const status = getBanStatus(card);
-            const message = status
-                ? `${card.name} is ${status} on the ${currentBanlistLabel()} banlist (max ${limit}).`
-                : `${card.name} already appears ${limit} times. Each card can only be used up to ${limit} copies.`;
-            alert(message);
-            return;
-        }
-        state.deck[zone].push(card);
-        renderDeckSlots();
-    }
-
-    function handleSlotClick(event, zone) {
-        const slot = event.target.closest('.deck-slot');
-        if (!slot || !slot.dataset.index) return;
-        const index = Number(slot.dataset.index);
-        if (Number.isNaN(index)) return;
-        const removed = state.deck[zone].splice(index, 1);
-        if (removed.length) renderDeckSlots();
-    }
-
-    function renderDeckSlots() {
-        if (!state.deck.extra) state.deck.extra = [];
-        renderZone('mainDeckSlots', state.deck.main, limits.main, document.getElementById('mainCount'));
-        renderZone('extraDeckSlots', state.deck.extra, limits.extra, document.getElementById('extraCount'));
-        renderZone('sideDeckSlots', state.deck.side, limits.side, document.getElementById('sideCount'));
-        renderDeckWarnings();
-    }
-
-    function renderZone(containerId, cards, limit, counterEl) {
-        const container = document.getElementById(containerId);
-        if (!container) return;
-        container.innerHTML = Array.from({ length: limit }, (_, index) => {
-            const card = cards[index];
-            return card
-                ? `<div class="deck-slot filled" data-index="${index}" style="background-image:url('${escapeAttribute(getCardImageUrl(card))}')"><span>${escapeHtml(card.name)}</span></div>`
-                : `<div class="deck-slot" data-index="${index}">Empty slot</div>`;
-        }).join('');
-        if (counterEl) counterEl.textContent = cards.length;
-    }
-
-    function renderDeckWarnings() {
-        const warningsEl = document.getElementById('deckWarnings');
-        if (!warningsEl) return;
-
-        const counts = {};
-        ['main', 'side', 'extra'].forEach(zone => {
-            state.deck[zone].forEach(card => {
-                counts[card.id] = (counts[card.id] || 0) + 1;
-            });
-        });
-
-        const issues = Object.entries(counts).reduce((acc, [cardId, copies]) => {
-            const card = getCardById(Number(cardId));
-            const limit = allowedCopies(card);
-            if (copies > limit) {
-                acc.push(`${card?.name ?? 'Unknown Card'} (${copies}) exceeds limit ${limit}`);
-            }
-            return acc;
-        }, []);
-        if (state.deck.main.length < 40 || state.deck.main.length > 60) {
-            issues.push('Main deck must contain 40-60 cards.');
-        }
-        if ((state.deck.extra || []).length > 15) {
-            issues.push('Extra deck cannot exceed 15 cards.');
-        }
-        if (state.deck.side.length > 15) {
-            issues.push('Side deck cannot exceed 15 cards.');
-        }
-        const summary = `Main Deck: ${state.deck.main.length}/40-60 • Extra Deck: ${(state.deck.extra || []).length}/0-15 • Side Deck: ${state.deck.side.length}/0-15 • Banlist: ${currentBanlistLabel()}`;
-
-        if (!issues.length) {
-            warningsEl.classList.remove('alert');
-            warningsEl.innerHTML = `<strong>Banlist check passed.</strong> ${summary}`;
-        } else {
-            warningsEl.classList.add('alert');
-            warningsEl.innerHTML = `<strong>Banlist issues detected.</strong>
-                <ul>${issues.map(issue => `<li>${issue}</li>`).join('')}</ul>
-                <div>${summary}</div>`;
-        }
+    function getCardById(id) { return state.cardCache.get(id); }
+    
+    function getBanStatus(card) {
+        const format = state.deckSettings.banlist; 
+        if (format === 'ban_tcg') return card.limit_tcg;
+        if (format === 'ban_ocg') return card.limit_ocg;
+        if (format === 'ban_goat') return card.limit_goat;
+        return null;
     }
 
     function allowedCopies(card) {
-        if (!card) return 0;
         const status = getBanStatus(card);
         if (status === 'Forbidden') return 0;
         if (status === 'Limited') return 1;
@@ -536,202 +544,186 @@
         return 3;
     }
 
-    function getBanStatus(card) {
-        if (!card || !card.banlist_info) return null;
-        const key = state.deckSettings.banlist;
-        return card.banlist_info[key] || null;
-    }
-
-    function getCardById(cardId) {
-        return state.cardIndex.get(cardId);
-    }
-
-    function getTotalCopies(cardId) {
-        return state.deck.main.filter(card => card.id === cardId).length +
-            state.deck.side.filter(card => card.id === cardId).length +
-            (state.deck.extra || []).filter(card => card.id === cardId).length;
-    }
-
-    function getCardImageUrl(card) {
-        if (!card) return 'assets/images/card-placeholder.svg';
-        if (card.image_url) return card.image_url;
-        return `assets/images/cards/${card.id}.jpg`;
-    }
-
     function currentBanlistLabel() {
         return BANLIST_LABELS[state.deckSettings.banlist] || 'Custom';
     }
 
-    function getQueryParam(key) {
-        return new URLSearchParams(window.location.search).get(key);
+    function isExtraDeckCard(card) {
+        if (!card.type) return false;
+        return card.type.includes('Fusion') || card.type.includes('Synchro') || 
+               card.type.includes('XYZ') || card.type.includes('Link');
     }
 
-    function setPreview(card) {
-        if (!card || !previewEl.name) return;
-        previewEl.name.textContent = card.name;
-        previewEl.type.textContent = [card.type, card.attribute, card.level ? `Level ${card.level}` : ''].filter(Boolean).join(' • ');
-        previewEl.desc.textContent = card.desc || 'No description.';
-        if (previewEl.image) {
-            previewEl.image.src = getCardImageUrl(card);
+    function getTotalCopies(cardId) {
+        return [...state.deck.main, ...state.deck.side, ...state.deck.extra].filter(c => c.id === cardId).length;
+    }
+
+    function updateRailCounts() {
+        const counts = { monster: 0, spell: 0, trap: 0 };
+        state.deck.main.forEach(c => {
+            if (c.type.includes('Monster')) counts.monster++;
+            else if (c.type.includes('Spell')) counts.spell++;
+            else if (c.type.includes('Trap')) counts.trap++;
+        });
+        const railTotal = document.getElementById('railTotal');
+        if (railTotal) {
+            railTotal.textContent = state.deck.main.length;
+            document.getElementById('railMonsters').textContent = counts.monster;
+            document.getElementById('railSpells').textContent = counts.spell;
+            document.getElementById('railTraps').textContent = counts.trap;
         }
     }
 
-    function cardImageMarkup(card) {
-        if (!card || (!card.image_url_small && !card.image_url)) {
-            return '<div class="card-image no-image">Artwork unavailable</div>';
-        }
-        const localPath = `assets/images/cards/${card.id}.jpg`;
-        const remotePath = card.image_url_small || card.image_url || '';
-        const safeName = escapeHtml(card.name || 'Card image');
-        const safeRemote = escapeAttribute(remotePath);
-
-        return `
-            <div class="card-image">
-                <img src="${localPath}"
-                    alt="${safeName}"
-                    loading="lazy"
-                    data-remote="${safeRemote}"
-                    onerror="this.onerror=null; const remote=this.dataset.remote; if (remote) { this.dataset.remote=''; this.src=remote; } else { const wrapper=this.closest('.card-image'); if (wrapper) { wrapper.classList.add('no-image'); wrapper.textContent='Artwork unavailable'; } this.remove(); }" />
-            </div>
-        `;
+    function renderDeckWarnings() {
+        const warningsEl = document.getElementById('deckWarnings');
+        if(!warningsEl) return;
+        let msg = `Main: ${state.deck.main.length} | Extra: ${state.deck.extra.length} | Side: ${state.deck.side.length}`;
+        warningsEl.textContent = msg;
     }
 
-    function escapeHtml(value) {
-        return (value ?? '').replace(/[&<>"']/g, char => ({
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            '"': '&quot;',
-            "'": '&#39;',
-        })[char]);
+    function getCardCategory(card) {
+        if (card.type.includes('Monster')) return 'monster';
+        if (card.type.includes('Spell')) return 'spell';
+        if (card.type.includes('Trap')) return 'trap';
+        return '';
     }
 
-    function escapeAttribute(value) {
-        return (value ?? '').replace(/"/g, '&quot;');
+    function escapeHtml(str) { return (str || '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]); }
+    function escapeAttribute(str) { return (str || '').replace(/"/g, '&quot;'); }
+    function getQueryParam(k) { return new URLSearchParams(window.location.search).get(k); }
+    function truncate(text, length = 160) {
+        if (!text) return '';
+        return text.length > length ? `${text.slice(0, length)}…` : text;
     }
 
-    function initPublicDeckPage() {
+    async function initPublicDeckPage() {
         const listEl = document.getElementById('publicDeckList');
         if (!listEl) return;
 
-        fetch('api/decks/public.php')
-            .then(response => response.json())
-            .then(payload => {
-                const decks = payload.data || [];
-                if (!decks.length) {
-                    listEl.innerHTML = '<p>No public decks have been published yet.</p>';
-                    return;
-                }
-                listEl.innerHTML = decks.map(deck => `
-                    <article class="deck-card">
-                        <header>
-                            <h3>${escapeHtml(deck.name)}</h3>
-                            <div>${deck.format} Format</div>
-                        </header>
-                        <p>${escapeHtml(deck.description || 'This duelist has not provided a description.')}</p>
-                        <ul>
-                            <li>Main: ${deck.main_count ?? 0} cards</li>
-                            <li>Extra: ${deck.extra_count ?? 0} cards</li>
-                            <li>Side: ${deck.side_count ?? 0} cards</li>
-                        </ul>
-                        <footer>
-                            <span>By ${escapeHtml(deck.username)}</span>
-                            <span>${new Date(deck.updated_at).toLocaleDateString()}</span>
-                        </footer>
-                    </article>
-                `).join('');
-            })
-            .catch(() => {
-                listEl.innerHTML = '<p>Unable to load public decks. Please try again later.</p>';
+        try {
+            const res = await fetch('api/decks/public.php', {
+                credentials: 'same-origin'
             });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const json = await res.json();
+            const decks = json.data || [];
+            renderDeckList(listEl, decks, false);
+        } catch (err) {
+            console.error(err);
+            listEl.innerHTML = '<p>Error loading decks.</p>';
+        }
     }
-
-    function initMyDecksPage() {
+    
+    async function initMyDecksPage() {
         const listEl = document.getElementById('myDeckList');
         if (!listEl) return;
+        
+        try {
+            const res = await fetch('api/decks/my.php', {
+                credentials: 'same-origin'
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const json = await res.json();
+            if (json.error) {
+                listEl.innerHTML = `<p>${json.error} <a href="login.php">Log in</a></p>`;
+                return;
+            }
+            const decks = json.data || [];
+            renderDeckList(listEl, decks, true);
+        } catch (err) {
+            console.error(err);
+            listEl.innerHTML = '<p>Error loading decks.</p>';
+        }
 
-        const render = () => {
-            fetch('api/decks/my.php')
-                .then(response => response.json())
-                .then(payload => {
-                    const decks = payload.data || [];
-                    if (!decks.length) {
-                        listEl.innerHTML = '<p>You have not saved any decks yet. Build one to see it here.</p>';
-                        return;
+        listEl.addEventListener('click', async (e) => {
+            if (e.target.matches('.btn.danger')) {
+                const deckId = e.target.dataset.deleteId;
+                if (deckId && confirm('Delete this deck?')) {
+                    try {
+                        const res = await fetch('api/decks/delete.php', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            credentials: 'same-origin',
+                            body: JSON.stringify({deck_id: deckId})
+                        });
+                        if (res.ok) {
+                            window.location.reload();
+                        } else {
+                            alert('Failed to delete deck.');
+                        }
+                    } catch (error) {
+                        console.error(error);
+                        alert('Network error.');
                     }
-                    listEl.innerHTML = decks.map(deck => `
-                        <article class="deck-card">
-                            <header>
-                                <h3>${escapeHtml(deck.name)}</h3>
-                                <div>${deck.format} Format</div>
-                            </header>
-                            <p>${escapeHtml(deck.description || 'No description provided.')}</p>
-                            <ul>
-                                <li>Main: ${deck.main_count ?? 0} cards</li>
-                                <li>Extra: ${deck.extra_count ?? 0} cards</li>
-                                <li>Side: ${deck.side_count ?? 0} cards</li>
-                            </ul>
-                            <footer>
-                                <span>Updated ${new Date(deck.updated_at).toLocaleDateString()}</span>
-                                <label>
-                                    Visibility:
-                                    <select data-deck-id="${deck.deck_id}" class="deck-visibility-select">
-                                        ${['private','unlisted','public'].map(option => `
-                                            <option value="${option}" ${deck.visibility === option ? 'selected' : ''}>${option}</option>
-                                        `).join('')}
-                                    </select>
-                                </label>
-                            </footer>
-                            <div class="deck-actions">
-                                <a class="btn secondary" href="deck-builder.php?deck_id=${deck.deck_id}">Edit</a>
-                                <button class="btn danger deck-delete-btn" data-deck-id="${deck.deck_id}">Delete</button>
-                            </div>
-                        </article>
-                    `).join('');
-                })
-                .catch(() => {
-                    listEl.innerHTML = '<p>Unable to load your decks. Please refresh.</p>';
-                });
-        };
-
-        render();
-
-        listEl.addEventListener('change', event => {
-            const select = event.target.closest('.deck-visibility-select');
-            if (!select) return;
-            const deckId = Number(select.dataset.deckId);
-            const visibility = select.value;
-            fetch('api/decks/visibility.php', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ deck_id: deckId, visibility })
-            }).then(response => {
-                if (!response.ok) {
-                    throw new Error();
                 }
-            }).catch(() => {
-                alert('Failed to update visibility. Please try again.');
-                render();
-            });
-        });
-
-        listEl.addEventListener('click', event => {
-            const button = event.target.closest('.deck-delete-btn');
-            if (!button) return;
-            const deckId = Number(button.dataset.deckId);
-            if (!Number.isFinite(deckId)) return;
-            if (!confirm('Delete this deck? This action cannot be undone.')) return;
-            fetch('api/decks/delete.php', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ deck_id: deckId })
-            }).then(response => {
-                if (!response.ok) throw new Error();
-                render();
-            }).catch(() => {
-                alert('Failed to delete deck.');
-            });
+            }
         });
     }
-})();
 
+    function renderDeckList(container, decks, isOwner) {
+        if (!decks.length) {
+            container.innerHTML = '<p>No decks found.</p>';
+            return;
+        }
+        
+        container.innerHTML = decks.map(deck => `
+            <article class="deck-card">
+                <header>
+                    <h3>${escapeHtml(deck.name)}</h3>
+                    <div style="font-size:0.85em; color:var(--text-muted);">
+                        <span class="format">${escapeHtml(deck.format)}</span>
+                        ${isOwner ? ` &bull; <span style="text-transform:capitalize">${deck.visibility}</span>` : ` &bull; by ${escapeHtml(deck.username)}`}
+                    </div>
+                </header>
+                <div class="deck-stats" style="margin:0.5rem 0;">
+                    Main: <strong>${deck.main_count || 0}</strong> | 
+                    Extra: <strong>${deck.extra_count || 0}</strong> | 
+                    Side: <strong>${deck.side_count || 0}</strong>
+                </div>
+                <p style="font-size:0.9rem; color:var(--text-muted); margin-bottom:1rem;">${truncate(deck.description, 100) || 'No description.'}</p>
+                <footer style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-size:0.8rem; color:var(--text-muted);">${new Date(deck.updated_at).toLocaleDateString()}</span>
+                    <div class="deck-actions" style="display:flex; gap:0.5rem;">
+                        <a href="deck-builder.php?deck_id=${deck.deck_id}" class="btn secondary" style="padding:0.25rem 0.75rem; font-size:0.85rem;">${isOwner ? 'Edit' : 'View'}</a>
+                        ${isOwner ? `<button class="btn danger" data-delete-id="${deck.deck_id}" style="padding:0.25rem 0.75rem; font-size:0.85rem;">Delete</button>` : ''}
+                    </div>
+                </footer>
+            </article>
+        `).join('');
+    }
+
+    async function saveDeckToServer() {
+        const statusEl = document.getElementById('deckSaveStatus');
+        if (!statusEl) return;
+        statusEl.textContent = 'Saving...';
+        
+        const payload = {
+            name: document.getElementById('deckName').value || 'Untitled',
+            format: document.getElementById('deckFormat').value,
+            visibility: document.getElementById('deckVisibility').value,
+            description: document.getElementById('deckDescription').value,
+            deck_id: state.currentDeckId,
+            main: state.deck.main.map(c => c.id),
+            side: state.deck.side.map(c => c.id),
+            extra: state.deck.extra.map(c => c.id)
+        };
+
+        try {
+            const res = await fetch('api/decks/save.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+            const json = await res.json();
+            if (json.success) {
+                state.currentDeckId = json.deck_id;
+                statusEl.textContent = 'Saved!';
+            } else {
+                statusEl.textContent = 'Error: ' + (json.error || 'Unknown');
+            }
+        } catch(e) {
+            statusEl.textContent = 'Network error.';
+        }
+    }
+
+})();

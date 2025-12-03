@@ -3,104 +3,187 @@ $pageTitle = 'Deck Builder';
 include __DIR__ . '/includes/head.php';
 ?>
 <section class="deck-builder-board">
-    <div class="builder-left panel">
-        <div class="panel deck-info-panel">
-            <h3>Deck Details</h3>
-            <label for="deckName">Deck Name</label>
-            <input type="text" id="deckName" placeholder="My Tournament Deck">
-            <label for="deckFormat">Format</label>
-            <select id="deckFormat">
-                <option value="Advanced">Advanced</option>
-                <option value="Traditional">Traditional</option>
-                <option value="GOAT">GOAT</option>
-            </select>
-            <label for="deckVisibility">Visibility</label>
-            <select id="deckVisibility">
-                <option value="private">Private</option>
-                <option value="unlisted">Unlisted</option>
-                <option value="public">Public</option>
-            </select>
-            <label for="deckDescription">Description</label>
-            <input type="text" id="deckDescription" placeholder="Optional deck notes">
-            <label for="banlistFormat">Banlist</label>
-            <select id="banlistFormat">
-                <option value="ban_tcg" selected>Advanced (TCG)</option>
-                <option value="ban_ocg">OCG</option>
-                <option value="ban_goat">GOAT</option>
-            </select>
-            <div class="deck-warnings" id="deckWarnings">
-                Main Deck: 0/40-60 &bull; Extra Deck: 0/0-15 &bull; Side Deck: 0/0-15
-            </div>
-            <div class="deck-save-status" id="deckSaveStatus"></div>
-            <button id="saveDeck" type="button">Save Deck</button>
+    <div class="builder-rail">
+        <div class="rail-stats">
+            <div class="rail-count total" id="railTotal">0</div>
+            <div class="rail-count monster" id="railMonsters">0</div>
+            <div class="rail-count spell" id="railSpells">0</div>
+            <div class="rail-count trap" id="railTraps">0</div>
         </div>
-        <div class="panel card-preview-panel" id="cardPreview">
+        <div class="rail-icons">
+            <button type="button" title="Shuffle" disabled>⟳</button>
+            <button type="button" title="Sort" disabled>A-Z</button>
+            <button type="button" title="Clear" disabled>✖</button>
+        </div>
+        <div class="rail-labels">
+            <span>DECK</span>
+            <span>SIDE</span>
+            <span>EXTRA</span>
+        </div>
+    </div>
+
+    <div class="builder-preview panel">
+        <div class="card-preview-panel" id="cardPreview">
             <img src="assets/images/card-placeholder.svg" alt="Card preview" id="cardPreviewImage">
             <div class="card-preview-info">
                 <h4 id="cardPreviewName">Select a card</h4>
                 <p id="cardPreviewType">&nbsp;</p>
-                <div id="cardPreviewDesc" class="card-preview-desc">Hover or click a card to view details.</div>
             </div>
         </div>
-        <div class="panel builder-buttons">
+        <div class="card-preview-desc" id="cardPreviewDesc">
+            Hover or click a card to view its full text.
+        </div>
+        <div class="deck-info-panel">
+            <label>
+                Deck Name
+                <input type="text" id="deckName" placeholder="My Tournament Deck">
+            </label>
+            <label>
+                Format
+                <select id="deckFormat">
+                    <option value="Advanced">Advanced</option>
+                    <option value="Traditional">Traditional</option>
+                    <option value="GOAT">GOAT</option>
+                </select>
+            </label>
+            <label>
+                Visibility
+                <select id="deckVisibility">
+                    <option value="private">Private</option>
+                    <option value="unlisted">Unlisted</option>
+                    <option value="public">Public</option>
+                </select>
+            </label>
+            <label>
+                Description
+                <input type="text" id="deckDescription" placeholder="Optional notes">
+            </label>
+            <label>
+                Banlist
+                <select id="banlistFormat">
+                    <option value="ban_tcg" selected>Advanced (TCG)</option>
+                    <option value="ban_ocg">OCG</option>
+                    <option value="ban_goat">GOAT</option>
+                </select>
+            </label>
+        </div>
+        <div class="deck-warnings" id="deckWarnings">
+            Main Deck: 0/40-60 &bull; Extra Deck: 0/0-15 &bull; Side Deck: 0/0-15
+        </div>
+        <div class="deck-save-status" id="deckSaveStatus"></div>
+        <div class="deck-actions-row">
             <button class="btn secondary" type="button" onclick="window.location.href='my-decks.php'">My Decks</button>
-            <button class="btn secondary" type="button">Import Deck</button>
-            <button class="btn secondary" type="button">Export Deck</button>
+            <div class="deck-action-group">
+                <button class="btn secondary" type="button" disabled>Import</button>
+                <button class="btn secondary" type="button" disabled>Export</button>
+            </div>
+            <button id="saveDeck" type="button">Save Deck</button>
         </div>
     </div>
 
-    <div class="builder-center panel">
+    <div class="builder-main panel">
         <div class="deck-stage">
-            <h3>Main Deck (<span id="mainCount">0</span>/40-60)</h3>
             <div class="master-grid" id="mainDeckSlots"></div>
         </div>
-        <div class="deck-stage deck-stage-inline">
-            <div>
-                <h3>Extra Deck (<span id="extraCount">0</span>/0-15)</h3>
-                <div class="side-grid" id="extraDeckSlots"></div>
-            </div>
-            <div>
-                <h3>Side Deck (<span id="sideCount">0</span>/0-15)</h3>
-                <div class="side-grid" id="sideDeckSlots"></div>
-            </div>
+        <div class="deck-stage" id="sideDeckContainer">
+            <div class="side-grid" id="sideDeckSlots"></div>
+        </div>
+        <div class="deck-stage" id="extraDeckContainer">
+            <div class="side-grid" id="extraDeckSlots"></div>
         </div>
     </div>
 
-    <div class="builder-right panel">
-        <h3>Search Cards</h3>
+    <div class="builder-right panel builder-search-panel">
+        <div class="search-header">SEARCH <a href="#" style="font-size: 0.6em; float:right; text-decoration:underline;">more options</a></div>
         <form class="builder-search" id="builderFilters">
-            <label>
-                Name
-                <input type="text" id="builderSearch" placeholder="Blue-Eyes">
-            </label>
-            <label>
-                Attribute
-                <select id="builderAttribute">
-                    <option value="">Any</option>
+            <div class="search-row">
+                <label>Name:</label>
+                <input type="text" id="builderSearch">
+            </div>
+            <div class="search-row">
+                <label>Desc:</label>
+                <input type="text" id="builderDesc">
+            </div>
+            <div class="search-row">
+                <label>Card:</label>
+                <select id="builderCardCategory">
+                    <option value="">All</option>
+                    <option value="monster">Monster</option>
+                    <option value="spell">Spell</option>
+                    <option value="trap">Trap</option>
                 </select>
-            </label>
-            <label>
-                Race / Type
+                <select disabled><option></option></select> <!-- Placeholder for second dropdown -->
+            </div>
+            <div class="search-row">
+                <label>Type:</label>
                 <select id="builderType">
-                    <option value="">Any</option>
+                    <option value="">All</option>
                 </select>
-            </label>
-            <label>
-                Level (max)
-                <select id="builderLevel">
+                <select disabled><option></option></select> <!-- Placeholder -->
+            </div>
+            <div class="search-row">
+                <label>Attrib:</label>
+                <div class="split-row">
+                    <select id="builderAttribute">
+                        <option value="">All</option>
+                    </select>
+                    <div class="mini-range">
+                        <input type="number" id="builderLevelMin" placeholder="">
+                        <span>&le; Lvl &le;</span>
+                        <input type="number" id="builderLevelMax" placeholder="">
+                    </div>
+                </div>
+            </div>
+            <div class="search-row">
+                <div class="mini-range full">
+                    <input type="number" id="builderAtkMin" placeholder="">
+                    <span>&le; ATK &le;</span>
+                    <input type="number" id="builderAtkMax" placeholder="">
+                </div>
+            </div>
+            <div class="search-row">
+                <div class="mini-range full">
+                    <input type="number" id="builderDefMin" placeholder="">
+                    <span>&le; DEF &le;</span>
+                    <input type="number" id="builderDefMax" placeholder="">
+                </div>
+            </div>
+            <div class="search-row">
+                <label>Limit:</label>
+                <select id="builderLimit">
                     <option value="">Any</option>
-                    <option value="4">4</option>
-                    <option value="7">7</option>
-                    <option value="8">8</option>
+                    <option value="forbidden">Forbidden</option>
+                    <option value="limited">Limited</option>
+                    <option value="semi">Semi-Limited</option>
                 </select>
-            </label>
+                <label style="width:auto; margin-left: 5px;">Order:</label>
+                <select id="builderOrder">
+                    <option value="alpha">Alpha</option>
+                    <option value="atk">ATK</option>
+                    <option value="def">DEF</option>
+                    <option value="level">Level</option>
+                </select>
+            </div>
+            <div class="search-row centered">
+                <button class="btn-retro" id="builderSearchButton" type="submit">Search</button>
+            </div>
         </form>
-        <div class="results-meta" id="builderCardMeta">Loading builder cards…</div>
-        <div class="card-grid list" id="builderCardGrid">
-            <p>Loading cards...</p>
+
+        <div class="search-pagination">
+            <button id="builderPrev" type="button" class="arrow-btn left"></button>
+            <span id="builderResultCount">0 / 0</span>
+            <button id="builderNext" type="button" class="arrow-btn right"></button>
         </div>
-        <button class="btn secondary" id="builderMoreBtn" hidden>Load more cards</button>
+
+        <div class="card-grid list compact-grid" id="builderCardGrid">
+            <p>Loading...</p>
+        </div>
+        
+        <div class="search-footer">
+             <select id="builderFormatSelect" disabled>
+                <option>Oct 2025 (TCG)</option>
+             </select>
+        </div>
     </div>
 </section>
 <?php include __DIR__ . '/includes/footer.php'; ?>
-
