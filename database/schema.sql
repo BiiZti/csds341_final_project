@@ -58,7 +58,7 @@ CREATE INDEX idx_decks_visibility ON decks (visibility);
 CREATE TABLE IF NOT EXISTS deck_cards (
     deck_id      INT NOT NULL,
     card_id      INT NOT NULL,
-    slot         ENUM('main','side') NOT NULL DEFAULT 'main',
+    slot         ENUM('main','side','extra') NOT NULL DEFAULT 'main',
     copies       TINYINT UNSIGNED NOT NULL DEFAULT 1 CHECK (copies BETWEEN 1 AND 3),
     PRIMARY KEY (deck_id, card_id, slot),
     CONSTRAINT fk_deck_cards_deck FOREIGN KEY (deck_id) REFERENCES decks(deck_id) ON DELETE CASCADE,

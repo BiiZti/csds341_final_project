@@ -25,6 +25,8 @@ $visibility = $input['visibility'] ?? 'private';
 $description = trim($input['description'] ?? '');
 $main = $input['main'] ?? [];
 $side = $input['side'] ?? [];
+$extra = $input['extra'] ?? [];
+$deckId = isset($input['deck_id']) ? (int) $input['deck_id'] : 0;
 
 $allowedFormats = ['Advanced', 'Traditional', 'GOAT'];
 $allowedVisibility = ['private', 'unlisted', 'public'];
@@ -35,24 +37,47 @@ if ($name === '' || !in_array($format, $allowedFormats, true) || !in_array($visi
     exit;
 }
 
-if (count($main) < 20) {
+if (count($main) < 40 || count($main) > 60 || count($side) > 15 || count($extra) > 15) {
     http_response_code(400);
-    echo json_encode(['error' => 'Main deck must contain at least 20 cards in this prototype.']);
+    echo json_encode(['error' => 'Deck sizes must be Main 40-60, Extra 0-15, Side 0-15 cards.']);
     exit;
 }
 
 try {
     $pdo->beginTransaction();
 
-    $stmt = $pdo->prepare('INSERT INTO decks (user_id, name, format, visibility, description) VALUES (:user_id, :name, :format, :visibility, :description)');
-    $stmt->execute([
-        ':user_id' => $_SESSION['user_id'],
-        ':name' => $name,
-        ':format' => $format,
-        ':visibility' => $visibility,
-        ':description' => $description,
-    ]);
-    $deckId = (int) $pdo->lastInsertId();
+    if ($deckId > 0) {
+        $check = $pdo->prepare('SELECT deck_id FROM decks WHERE deck_id = :deck_id AND user_id = :user_id');
+        $check->execute([
+            ':deck_id' => $deckId,
+            ':user_id' => $_SESSION['user_id'],
+        ]);
+        if (!$check->fetch()) {
+            http_response_code(404);
+            echo json_encode(['error' => 'Deck not found or permission denied.']);
+            exit;
+        }
+        $update = $pdo->prepare('UPDATE decks SET name = :name, format = :format, visibility = :visibility, description = :description, updated_at = CURRENT_TIMESTAMP WHERE deck_id = :deck_id AND user_id = :user_id');
+        $update->execute([
+            ':name' => $name,
+            ':format' => $format,
+            ':visibility' => $visibility,
+            ':description' => $description,
+            ':deck_id' => $deckId,
+            ':user_id' => $_SESSION['user_id'],
+        ]);
+        $pdo->prepare('DELETE FROM deck_cards WHERE deck_id = :deck_id')->execute([':deck_id' => $deckId]);
+    } else {
+        $stmt = $pdo->prepare('INSERT INTO decks (user_id, name, format, visibility, description) VALUES (:user_id, :name, :format, :visibility, :description)');
+        $stmt->execute([
+            ':user_id' => $_SESSION['user_id'],
+            ':name' => $name,
+            ':format' => $format,
+            ':visibility' => $visibility,
+            ':description' => $description,
+        ]);
+        $deckId = (int) $pdo->lastInsertId();
+    }
 
     $insertCard = $pdo->prepare('INSERT INTO deck_cards (deck_id, card_id, slot, copies) VALUES (:deck_id, :card_id, :slot, :copies)');
 
@@ -77,6 +102,7 @@ try {
 
     $aggregateInsert($main, 'main');
     $aggregateInsert($side, 'side');
+    $aggregateInsert($extra, 'extra');
 
     $pdo->commit();
 

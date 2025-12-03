@@ -20,7 +20,8 @@ $sql = "
            d.description,
            d.updated_at,
            SUM(CASE WHEN dc.slot = 'main' THEN dc.copies ELSE 0 END) AS main_count,
-           SUM(CASE WHEN dc.slot = 'side' THEN dc.copies ELSE 0 END) AS side_count
+           SUM(CASE WHEN dc.slot = 'side' THEN dc.copies ELSE 0 END) AS side_count,
+           SUM(CASE WHEN dc.slot = 'extra' THEN dc.copies ELSE 0 END) AS extra_count
     FROM decks d
     LEFT JOIN deck_cards dc ON dc.deck_id = d.deck_id
     WHERE d.user_id = :user_id
